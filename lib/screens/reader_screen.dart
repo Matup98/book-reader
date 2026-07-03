@@ -75,8 +75,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
 
-    final selectedText = (await selection.getSelectedText()).trim();
+    final rawSelected = (await selection.getSelectedText()).trim();
     if (!mounted) return;
+    if (rawSelected.isEmpty) return;
+
+    final selectedText = normalizeText(rawSelected);
     if (selectedText.isEmpty) return;
 
     if (selectedText == _lastSelection && _overlay.isVisible) {
@@ -91,22 +94,64 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final pageText = ranges.isNotEmpty ? ranges.first.pageText.fullText : '';
     final sentence = expandToSentence(selectedText, pageText);
 
+    await _translateSelection(
+      selectedText: selectedText,
+      contextSentence: sentence,
+      pageText: pageText,
+    );
+  }
+
+  Future<void> _retranslateFromOverlay(String editedText) async {
+    final selectedText = normalizeText(editedText);
+    if (selectedText.isEmpty || !mounted) return;
+
+    _lastSelection = selectedText;
+    final contextSentence = _contextForManualEdit(
+      edited: selectedText,
+      original: _overlay.selectedText ?? '',
+      sentence: _overlay.contextSentence ?? selectedText,
+      pageText: _overlay.pageText ?? '',
+    );
+
+    await _translateSelection(
+      selectedText: selectedText,
+      contextSentence: contextSentence,
+      pageText: _overlay.pageText ?? '',
+    );
+  }
+
+  /// Builds context for a user-corrected selection (e.g. fixing `fi gure`).
+  String _contextForManualEdit({
+    required String edited,
+    required String original,
+    required String sentence,
+    required String pageText,
+  }) {
+    if (original.isNotEmpty && sentence.contains(original)) {
+      return sentence.replaceFirst(original, edited);
+    }
+    final expanded = expandToSentence(edited, pageText);
+    return expanded.isNotEmpty ? expanded : edited;
+  }
+
+  Future<void> _translateSelection({
+    required String selectedText,
+    required String contextSentence,
+    required String pageText,
+  }) async {
     setState(() {
       _overlay = _OverlayState.loading(
         selectedText: selectedText,
-        contextSentence: sentence,
+        contextSentence: contextSentence,
+        pageText: pageText,
       );
     });
 
     try {
-      // The full sentence is sent to LibreTranslate as context (with the
-      // selection wrapped in a marker tag). Only the marker's contents are
-      // shown to the user, so context influences quality without leaking into
-      // the UI.
       final result = await translateSelectionWithContext(
         provider: widget.translationProvider,
         selection: selectedText,
-        contextSentence: sentence,
+        contextSentence: contextSentence,
         source: 'en',
         target: 'es',
       );
@@ -114,7 +159,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       setState(() {
         _overlay = _OverlayState.shown(
           selectedText: selectedText,
-          contextSentence: sentence,
+          contextSentence: contextSentence,
+          pageText: pageText,
           translation: result.translatedText,
         );
       });
@@ -123,7 +169,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       setState(() {
         _overlay = _OverlayState.error(
           selectedText: selectedText,
-          contextSentence: sentence,
+          contextSentence: contextSentence,
+          pageText: pageText,
           message: e.message,
         );
       });
@@ -162,6 +209,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   translation: _overlay.translation,
                   errorMessage: _overlay.message,
                   onDismiss: _dismissOverlay,
+                  onRetranslate: _retranslateFromOverlay,
                 ),
               ),
             ),
@@ -177,6 +225,7 @@ class _OverlayState {
     this.status, {
     this.selectedText,
     this.contextSentence,
+    this.pageText,
     this.translation,
     this.message,
   });
@@ -186,37 +235,44 @@ class _OverlayState {
   const _OverlayState.loading({
     required String selectedText,
     required String contextSentence,
+    required String pageText,
   }) : this._(
           TranslationStatus.loading,
           selectedText: selectedText,
           contextSentence: contextSentence,
+          pageText: pageText,
         );
 
   const _OverlayState.shown({
     required String selectedText,
     required String contextSentence,
+    required String pageText,
     required String translation,
   }) : this._(
           TranslationStatus.shown,
           selectedText: selectedText,
           contextSentence: contextSentence,
+          pageText: pageText,
           translation: translation,
         );
 
   const _OverlayState.error({
     required String selectedText,
     required String contextSentence,
+    required String pageText,
     required String message,
   }) : this._(
           TranslationStatus.error,
           selectedText: selectedText,
           contextSentence: contextSentence,
+          pageText: pageText,
           message: message,
         );
 
   final TranslationStatus status;
   final String? selectedText;
   final String? contextSentence;
+  final String? pageText;
   final String? translation;
   final String? message;
 

@@ -1,6 +1,7 @@
 import 'package:book_reader/models/translation.dart';
 import 'package:book_reader/services/context_translator.dart';
 import 'package:book_reader/services/translation_service.dart';
+import 'package:book_reader/services/text_context.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeProvider implements TranslationProvider {
@@ -39,12 +40,56 @@ void main() {
     });
   });
 
+  group('alignSelectionInTranslation', () {
+    test('aligns gazed with the verb in the full sentence translation', () {
+      const sentence =
+          'the poster with the enormous face gazed from the wall';
+      const fullEs =
+          'el cartel con la enorme cara miraba desde la pared';
+
+      expect(
+        alignSelectionInTranslation(
+          sentence: sentence,
+          selection: 'gazed',
+          translation: fullEs,
+        ),
+        'miraba',
+      );
+    });
+
+    test('aligns bank with orilla in river context', () {
+      const sentence = 'The bank of the river was muddy.';
+      const fullEs = 'La orilla del río estaba fangosa.';
+
+      expect(
+        alignSelectionInTranslation(
+          sentence: sentence,
+          selection: 'bank',
+          translation: fullEs,
+        ),
+        'orilla',
+      );
+    });
+  });
+
+  group('buildMarkSpan', () {
+    test('includes neighbouring words around the selection', () {
+      const sentence =
+          'the poster with the enormous face gazed from the wall';
+      final span = buildMarkSpan(sentence, 'gazed');
+      expect(span.spanText, contains('face'));
+      expect(span.spanText, contains('gazed'));
+      expect(span.spanText, contains('from'));
+      expect(span.selectionWordCount, 1);
+    });
+  });
+
   group('translateSelectionWithContext', () {
-    test('sends html-marked sentence and extracts marker content', () async {
+    test('uses full sentence translation and aligns the selection', () async {
       final provider = _FakeProvider((req) async {
-        expect(req.format, TranslateFormat.html);
-        expect(req.text, contains('<b>bank</b>'));
-        return 'La <b>orilla</b> del río estaba fangosa.';
+        expect(req.format, TranslateFormat.text);
+        expect(req.text, 'The bank of the river was muddy.');
+        return 'La orilla del río estaba fangosa.';
       });
 
       final result = await translateSelectionWithContext(
@@ -59,18 +104,35 @@ void main() {
       expect(provider.calls.length, 1);
     });
 
-    test('falls back to translating the selection alone when marker is lost',
+    test('gazed matches the verb from the full sentence, not an isolated gloss',
         () async {
+      final provider = _FakeProvider((req) async {
+        return 'el cartel con la enorme cara miraba desde la pared';
+      });
+
+      final result = await translateSelectionWithContext(
+        provider: provider,
+        selection: 'gazed',
+        contextSentence:
+            'the poster with the enormous face gazed from the wall',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(result.translatedText, 'miraba');
+      expect(provider.calls.length, 1);
+    });
+
+    test('falls back to marked span when alignment returns nothing', () async {
       var callIndex = 0;
       final provider = _FakeProvider((req) async {
         callIndex++;
         if (callIndex == 1) {
-          expect(req.format, TranslateFormat.html);
-          return 'La orilla del río estaba fangosa.';
+          expect(req.format, TranslateFormat.text);
+          return '';
         }
-        expect(req.format, TranslateFormat.text);
-        expect(req.text, 'bank');
-        return 'banco';
+        expect(req.format, TranslateFormat.html);
+        return 'La <b>orilla</b> del río estaba fangosa.';
       });
 
       final result = await translateSelectionWithContext(
@@ -81,22 +143,19 @@ void main() {
         target: 'es',
       );
 
-      expect(result.translatedText, 'banco');
+      expect(result.translatedText, 'orilla');
       expect(provider.calls.length, 2);
     });
 
-    test('retries with lowercased selection when NMT keeps ALL CAPS verbatim',
+    test('retries with lowercased full sentence when alignment echoes source',
         () async {
       var callIndex = 0;
       final provider = _FakeProvider((req) async {
         callIndex++;
         if (callIndex == 1) {
-          expect(req.text, contains('<b>BIG</b>'));
-          return 'Este es un <b>BIG</b> problema.';
+          return 'Este es un BIG problema.';
         }
-        expect(req.text, contains('<b>big</b>'));
-        expect(req.text, isNot(contains('BIG')));
-        return 'Este es un <b>gran</b> problema.';
+        return 'Este es un gran problema.';
       });
 
       final result = await translateSelectionWithContext(
@@ -146,6 +205,25 @@ void main() {
       );
 
       expect(result.translatedText, 'hola');
+    });
+
+    test('normalizes hyphens via full sentence alignment', () async {
+      final provider = _FakeProvider((req) async {
+        expect(req.text, contains('lift shaft'));
+        return 'En cada rellano, frente al hueco del ascensor, el cartel.';
+      });
+
+      final result = await translateSelectionWithContext(
+        provider: provider,
+        selection: 'lift-shaft',
+        contextSentence:
+            'On each landing, opposite the lift-shaft, the poster...',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(result.translatedText, isNotEmpty);
+      expect(result.originalText, 'lift-shaft');
     });
   });
 }

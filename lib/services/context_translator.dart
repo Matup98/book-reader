@@ -1,9 +1,8 @@
 import '../models/translation.dart';
+import 'text_context.dart';
 import 'translation_service.dart';
 
-/// Unique marker used to locate the selection inside the HTML-translated
-/// sentence. Kept simple and short so the NMT engine is more likely to keep
-/// it intact around the target word.
+/// Unique marker used to locate a span inside the HTML-translated sentence.
 const String _markerTag = 'b';
 final RegExp _markerRegex = RegExp(
   '<$_markerTag[^>]*>(.*?)</$_markerTag>',
@@ -12,18 +11,12 @@ final RegExp _markerRegex = RegExp(
 
 /// Translates a selection using the full sentence as context.
 ///
-/// The strategy:
-///   1. Wrap the [selection] with `<b>` markers inside [contextSentence].
-///   2. Send the marked sentence to LibreTranslate with `format=html`.
-///   3. Extract whatever ends up between `<b>` and `</b>` in the response.
-///
-/// The NMT model translates the whole sentence and normally moves the marker
-/// with the target word, which lets us surface only the word's translation
-/// to the user while still giving the engine full context.
-///
-/// If the marker is dropped by the model (rare but possible), or the
-/// selection is not present verbatim in the sentence, we fall back to
-/// translating [selection] alone.
+/// Strategy for partial selections:
+///   1. Translate the **entire** sentence once (source of truth).
+///   2. Map the selection to the corresponding words via proportional alignment.
+///   3. If alignment fails, retry with a wider HTML-marked span around the
+///      selection (neighbouring words inside `<b>`).
+///   4. Fall back to translating the selection alone.
 Future<TranslateResult> translateSelectionWithContext({
   required TranslationProvider provider,
   required String selection,
@@ -31,77 +24,122 @@ Future<TranslateResult> translateSelectionWithContext({
   required LocaleCode source,
   required LocaleCode target,
 }) async {
-  final trimmedSentence = contextSentence.trim();
-  final trimmedSelection = selection.trim();
+  final displaySelection = selection.trim();
+  final displaySentence = contextSentence.trim();
+  final transSelection = normalizeForTranslation(displaySelection);
+  final transSentence = normalizeForTranslation(displaySentence);
 
-  // If the whole sentence was selected, translate it directly.
-  if (trimmedSentence.isEmpty || trimmedSelection == trimmedSentence) {
-    return provider.translate(
-      TranslateRequest(text: trimmedSelection, source: source, target: target),
+  if (transSentence.isEmpty || transSelection == transSentence) {
+    return _result(
+      await provider.translate(
+        TranslateRequest(text: transSelection, source: source, target: target),
+      ),
+      displaySelection,
     );
   }
 
-  if (!trimmedSentence.contains(trimmedSelection)) {
-    return provider.translate(
-      TranslateRequest(text: trimmedSelection, source: source, target: target),
+  if (!transSentence.contains(transSelection)) {
+    return _result(
+      await provider.translate(
+        TranslateRequest(text: transSelection, source: source, target: target),
+      ),
+      displaySelection,
     );
   }
 
-  final extracted = await _translateAndExtract(
+  final fromFull = await _translateViaFullSentence(
     provider: provider,
-    sentence: trimmedSentence,
-    selection: trimmedSelection,
+    sentence: transSentence,
+    selection: transSelection,
     source: source,
     target: target,
   );
-
-  // NMT models (Argos/Marian) often preserve ALL-CAPS words verbatim because
-  // they look like acronyms. When the extracted text is just a case-variant of
-  // the source selection, we retry with a lowercased selection in the
-  // sentence so the model treats it as a regular word.
-  if (extracted != null &&
-      extracted.isNotEmpty &&
-      !_isCaseInsensitiveEqual(extracted, trimmedSelection)) {
+  if (fromFull != null) {
     return TranslateResult(
-      translatedText: extracted,
+      translatedText: fromFull,
       source: source,
       target: target,
-      originalText: trimmedSelection,
+      originalText: displaySelection,
     );
   }
 
-  final lowered = trimmedSelection.toLowerCase();
-  if (lowered != trimmedSelection) {
-    final loweredSentence = _replaceFirst(
-      trimmedSentence,
-      trimmedSelection,
-      lowered,
-    );
-    final retry = await _translateAndExtract(
-      provider: provider,
-      sentence: loweredSentence,
-      selection: lowered,
+  final fromMark = await _translateAndExtract(
+    provider: provider,
+    sentence: transSentence,
+    selection: transSelection,
+    source: source,
+    target: target,
+  );
+  if (fromMark != null &&
+      fromMark.isNotEmpty &&
+      !_isCaseInsensitiveEqual(fromMark, transSelection)) {
+    return TranslateResult(
+      translatedText: fromMark,
       source: source,
       target: target,
+      originalText: displaySelection,
     );
-    if (retry != null &&
-        retry.isNotEmpty &&
-        !_isCaseInsensitiveEqual(retry, lowered)) {
-      return TranslateResult(
-        translatedText: retry,
+  }
+
+  return _result(
+    await provider.translate(
+      TranslateRequest(
+        text: transSelection.toLowerCase(),
         source: source,
         target: target,
-        originalText: trimmedSelection,
-      );
-    }
+      ),
+    ),
+    displaySelection,
+  );
+}
+
+/// Translates the full sentence and aligns the selection inside the result.
+Future<String?> _translateViaFullSentence({
+  required TranslationProvider provider,
+  required String sentence,
+  required String selection,
+  required LocaleCode source,
+  required LocaleCode target,
+}) async {
+  Future<String?> alignFrom(String translated) async {
+    final aligned = alignSelectionInTranslation(
+      sentence: sentence,
+      selection: selection,
+      translation: translated,
+    );
+    if (aligned == null || aligned.isEmpty) return null;
+    if (_isCaseInsensitiveEqual(aligned, selection)) return null;
+    return aligned;
   }
 
-  return provider.translate(
-    TranslateRequest(
-      text: lowered,
-      source: source,
-      target: target,
-    ),
+  final full = await provider.translate(
+    TranslateRequest(text: sentence, source: source, target: target),
+  );
+  final aligned = await alignFrom(full.translatedText);
+  if (aligned != null) return aligned;
+
+  final loweredSelection = selection.toLowerCase();
+  if (loweredSelection != selection) {
+    final loweredSentence = _replaceFirst(sentence, selection, loweredSelection);
+    final loweredFull = await provider.translate(
+      TranslateRequest(
+        text: loweredSentence,
+        source: source,
+        target: target,
+      ),
+    );
+    return alignFrom(loweredFull.translatedText);
+  }
+
+  return null;
+}
+
+TranslateResult _result(TranslateResult api, String displayOriginal) {
+  return TranslateResult(
+    translatedText: api.translatedText,
+    source: api.source,
+    target: api.target,
+    originalText: displayOriginal,
   );
 }
 
@@ -112,11 +150,15 @@ Future<String?> _translateAndExtract({
   required LocaleCode source,
   required LocaleCode target,
 }) async {
-  final selIndex = sentence.indexOf(selection);
-  if (selIndex < 0) return null;
-  final before = _escapeHtml(sentence.substring(0, selIndex));
-  final middle = _escapeHtml(selection);
-  final after = _escapeHtml(sentence.substring(selIndex + selection.length));
+  final markSpan = buildMarkSpan(sentence, selection);
+  final spanIndex = sentence.indexOf(markSpan.spanText);
+  if (spanIndex < 0) return null;
+
+  final before = _escapeHtml(sentence.substring(0, spanIndex));
+  final middle = _escapeHtml(markSpan.spanText);
+  final after = _escapeHtml(
+    sentence.substring(spanIndex + markSpan.spanText.length),
+  );
   final marked = '$before<$_markerTag>$middle</$_markerTag>$after';
 
   final result = await provider.translate(
@@ -127,7 +169,10 @@ Future<String?> _translateAndExtract({
       format: TranslateFormat.html,
     ),
   );
-  return extractMarkedTranslation(result.translatedText);
+  final markedInner = extractMarkedTranslation(result.translatedText);
+  if (markedInner == null) return null;
+
+  return extractSelectionFromMarkedSpan(markedInner, markSpan) ?? markedInner;
 }
 
 bool _isCaseInsensitiveEqual(String a, String b) {
