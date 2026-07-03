@@ -10,15 +10,14 @@ abstract class TranslationProvider {
   Future<TranslateResult> translate(TranslateRequest request);
 }
 
-/// Talks to a LibreTranslate-compatible endpoint via the local dev proxy.
-///
-/// The proxy is expected to expose `POST /translate` with the same JSON
-/// contract as LibreTranslate itself. See `proxy/src/index.ts`.
-class LibreTranslateProvider implements TranslationProvider {
-  LibreTranslateProvider({
+/// Talks to the local dev proxy, which routes to LibreTranslate or NLLB
+/// depending on `request.engine`. The proxy normalizes every backend to the
+/// LibreTranslate response shape (`{ translatedText }`).
+class ProxyTranslationProvider implements TranslationProvider {
+  ProxyTranslationProvider({
     required this.baseUrl,
     http.Client? client,
-    this.timeout = const Duration(seconds: 15),
+    this.timeout = const Duration(seconds: 30),
   }) : _client = client ?? http.Client();
 
   /// Base URL of the proxy, e.g. `http://localhost:8787`.
@@ -31,7 +30,8 @@ class LibreTranslateProvider implements TranslationProvider {
   @override
   Future<TranslateResult> translate(TranslateRequest request) async {
     final cacheKey =
-        '${request.source}->${request.target}::${request.format.wireValue}::${request.text}';
+        '${request.engine.wireValue}::${request.source}->${request.target}'
+        '::${request.format.wireValue}::${request.text}';
     final cached = _cache[cacheKey];
     if (cached != null) {
       return TranslateResult(
@@ -54,6 +54,7 @@ class LibreTranslateProvider implements TranslationProvider {
               'source': request.source,
               'target': request.target,
               'format': request.format.wireValue,
+              'engine': request.engine.wireValue,
             }),
           )
           .timeout(timeout);

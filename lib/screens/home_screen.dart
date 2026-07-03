@@ -3,13 +3,25 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../models/translation.dart';
 import '../services/translation_service.dart';
 import 'reader_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.translationProvider});
+  const HomeScreen({
+    super.key,
+    required this.translationProvider,
+    required this.translationMode,
+    required this.onTranslationModeChanged,
+    required this.translationEngine,
+    required this.onTranslationEngineChanged,
+  });
 
   final TranslationProvider translationProvider;
+  final TranslationMode translationMode;
+  final ValueChanged<TranslationMode> onTranslationModeChanged;
+  final TranslationEngine translationEngine;
+  final ValueChanged<TranslationEngine> onTranslationEngineChanged;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -42,6 +54,10 @@ class _HomeScreenState extends State<HomeScreen> {
         MaterialPageRoute<void>(
           builder: (_) => ReaderScreen(
             translationProvider: widget.translationProvider,
+            translationMode: widget.translationMode,
+            onTranslationModeChanged: widget.onTranslationModeChanged,
+            translationEngine: widget.translationEngine,
+            onTranslationEngineChanged: widget.onTranslationEngineChanged,
             fileName: file.name,
             bytes: bytes,
             path: path,

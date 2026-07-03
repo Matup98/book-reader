@@ -226,4 +226,129 @@ void main() {
       expect(result.originalText, 'lift-shaft');
     });
   });
+
+  group('translateSelection', () {
+    test('selectedText mode sends only the selection and returns full result',
+        () async {
+      final provider = _FakeProvider((req) async {
+        expect(req.text, 'bank');
+        expect(req.format, TranslateFormat.text);
+        return 'banco';
+      });
+
+      final result = await translateSelection(
+        provider: provider,
+        mode: TranslationMode.selectedText,
+        selection: 'bank',
+        contextSentence: 'The bank of the river was muddy.',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(result.translatedText, 'banco');
+      expect(result.originalText, 'bank');
+      expect(provider.calls.length, 1);
+    });
+
+    test('selectedText mode never uses html format', () async {
+      final provider = _FakeProvider((req) async => 'hola mundo');
+
+      await translateSelection(
+        provider: provider,
+        mode: TranslationMode.selectedText,
+        selection: 'hello world',
+        contextSentence: 'She said hello world to everyone.',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(provider.calls.length, 1);
+      expect(provider.calls.first.format, TranslateFormat.text);
+    });
+
+    test('selectedText mode normalizes hyphens in the selection', () async {
+      final provider = _FakeProvider((req) async {
+        expect(req.text, 'lift shaft');
+        return 'hueco del ascensor';
+      });
+
+      final result = await translateSelection(
+        provider: provider,
+        mode: TranslationMode.selectedText,
+        selection: 'lift-shaft',
+        contextSentence: 'opposite the lift-shaft',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(result.translatedText, 'hueco del ascensor');
+      expect(result.originalText, 'lift-shaft');
+    });
+
+    test('context mode uses the full sentence and aligns the selection',
+        () async {
+      final provider = _FakeProvider((req) async {
+        expect(req.text, 'The bank of the river was muddy.');
+        return 'La orilla del río estaba fangosa.';
+      });
+
+      final result = await translateSelection(
+        provider: provider,
+        mode: TranslationMode.context,
+        selection: 'bank',
+        contextSentence: 'The bank of the river was muddy.',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(result.translatedText, 'orilla');
+    });
+
+    test('NLLB engine skips the HTML fallback when alignment fails', () async {
+      // First call returns an unusable translation for alignment; if the
+      // engine were libretranslate we would then see a second call with
+      // TranslateFormat.html. NLLB must go straight to the plain-text
+      // fallback instead.
+      final provider = _FakeProvider((req) async {
+        expect(req.format, TranslateFormat.text);
+        expect(req.engine, TranslationEngine.nllb);
+        return 'orilla';
+      });
+
+      await translateSelection(
+        provider: provider,
+        mode: TranslationMode.context,
+        engine: TranslationEngine.nllb,
+        selection: 'bank',
+        contextSentence: 'The bank of the river was muddy.',
+        source: 'en',
+        target: 'es',
+      );
+
+      for (final call in provider.calls) {
+        expect(call.format, TranslateFormat.text);
+        expect(call.engine, TranslationEngine.nllb);
+      }
+    });
+
+    test('every request carries the selected engine', () async {
+      final provider = _FakeProvider((req) async {
+        expect(req.engine, TranslationEngine.nllb);
+        return 'banco';
+      });
+
+      await translateSelection(
+        provider: provider,
+        mode: TranslationMode.selectedText,
+        engine: TranslationEngine.nllb,
+        selection: 'bank',
+        contextSentence: 'The bank of the river was muddy.',
+        source: 'en',
+        target: 'es',
+      );
+
+      expect(provider.calls, isNotEmpty);
+      expect(provider.calls.first.engine, TranslationEngine.nllb);
+    });
+  });
 }

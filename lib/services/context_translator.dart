@@ -9,13 +9,73 @@ final RegExp _markerRegex = RegExp(
   dotAll: true,
 );
 
+/// Entry point used by the UI. Routes to the strategy chosen by the user:
+///
+///   - [TranslationMode.context]: sentence-aware translation with alignment
+///     (see [translateSelectionWithContext]).
+///   - [TranslationMode.selectedText]: sends only the highlighted text and
+///     returns its literal translation, ignoring the surrounding sentence.
+Future<TranslateResult> translateSelection({
+  required TranslationProvider provider,
+  required TranslationMode mode,
+  required String selection,
+  required String contextSentence,
+  required LocaleCode source,
+  required LocaleCode target,
+  TranslationEngine engine = TranslationEngine.libretranslate,
+}) {
+  switch (mode) {
+    case TranslationMode.context:
+      return translateSelectionWithContext(
+        provider: provider,
+        selection: selection,
+        contextSentence: contextSentence,
+        source: source,
+        target: target,
+        engine: engine,
+      );
+    case TranslationMode.selectedText:
+      return translateSelectedTextOnly(
+        provider: provider,
+        selection: selection,
+        source: source,
+        target: target,
+        engine: engine,
+      );
+  }
+}
+
+/// Translates only the highlighted text, without using the surrounding
+/// sentence as context. The overlay will show the full translation.
+Future<TranslateResult> translateSelectedTextOnly({
+  required TranslationProvider provider,
+  required String selection,
+  required LocaleCode source,
+  required LocaleCode target,
+  TranslationEngine engine = TranslationEngine.libretranslate,
+}) async {
+  final displaySelection = selection.trim();
+  final normalized = normalizeForTranslation(displaySelection);
+  return _result(
+    await provider.translate(
+      TranslateRequest(
+        text: normalized,
+        source: source,
+        target: target,
+        engine: engine,
+      ),
+    ),
+    displaySelection,
+  );
+}
+
 /// Translates a selection using the full sentence as context.
 ///
 /// Strategy for partial selections:
 ///   1. Translate the **entire** sentence once (source of truth).
 ///   2. Map the selection to the corresponding words via proportional alignment.
-///   3. If alignment fails, retry with a wider HTML-marked span around the
-///      selection (neighbouring words inside `<b>`).
+///   3. If alignment fails and the engine supports HTML markers, retry with a
+///      wider `<b>`-marked span around the selection.
 ///   4. Fall back to translating the selection alone.
 Future<TranslateResult> translateSelectionWithContext({
   required TranslationProvider provider,
@@ -23,6 +83,7 @@ Future<TranslateResult> translateSelectionWithContext({
   required String contextSentence,
   required LocaleCode source,
   required LocaleCode target,
+  TranslationEngine engine = TranslationEngine.libretranslate,
 }) async {
   final displaySelection = selection.trim();
   final displaySentence = contextSentence.trim();
@@ -32,7 +93,12 @@ Future<TranslateResult> translateSelectionWithContext({
   if (transSentence.isEmpty || transSelection == transSentence) {
     return _result(
       await provider.translate(
-        TranslateRequest(text: transSelection, source: source, target: target),
+        TranslateRequest(
+          text: transSelection,
+          source: source,
+          target: target,
+          engine: engine,
+        ),
       ),
       displaySelection,
     );
@@ -41,7 +107,12 @@ Future<TranslateResult> translateSelectionWithContext({
   if (!transSentence.contains(transSelection)) {
     return _result(
       await provider.translate(
-        TranslateRequest(text: transSelection, source: source, target: target),
+        TranslateRequest(
+          text: transSelection,
+          source: source,
+          target: target,
+          engine: engine,
+        ),
       ),
       displaySelection,
     );
@@ -53,6 +124,7 @@ Future<TranslateResult> translateSelectionWithContext({
     selection: transSelection,
     source: source,
     target: target,
+    engine: engine,
   );
   if (fromFull != null) {
     return TranslateResult(
@@ -63,22 +135,25 @@ Future<TranslateResult> translateSelectionWithContext({
     );
   }
 
-  final fromMark = await _translateAndExtract(
-    provider: provider,
-    sentence: transSentence,
-    selection: transSelection,
-    source: source,
-    target: target,
-  );
-  if (fromMark != null &&
-      fromMark.isNotEmpty &&
-      !_isCaseInsensitiveEqual(fromMark, transSelection)) {
-    return TranslateResult(
-      translatedText: fromMark,
+  if (engine.supportsHtmlMarkers) {
+    final fromMark = await _translateAndExtract(
+      provider: provider,
+      sentence: transSentence,
+      selection: transSelection,
       source: source,
       target: target,
-      originalText: displaySelection,
+      engine: engine,
     );
+    if (fromMark != null &&
+        fromMark.isNotEmpty &&
+        !_isCaseInsensitiveEqual(fromMark, transSelection)) {
+      return TranslateResult(
+        translatedText: fromMark,
+        source: source,
+        target: target,
+        originalText: displaySelection,
+      );
+    }
   }
 
   return _result(
@@ -87,6 +162,7 @@ Future<TranslateResult> translateSelectionWithContext({
         text: transSelection.toLowerCase(),
         source: source,
         target: target,
+        engine: engine,
       ),
     ),
     displaySelection,
@@ -100,6 +176,7 @@ Future<String?> _translateViaFullSentence({
   required String selection,
   required LocaleCode source,
   required LocaleCode target,
+  required TranslationEngine engine,
 }) async {
   Future<String?> alignFrom(String translated) async {
     final aligned = alignSelectionInTranslation(
@@ -113,7 +190,12 @@ Future<String?> _translateViaFullSentence({
   }
 
   final full = await provider.translate(
-    TranslateRequest(text: sentence, source: source, target: target),
+    TranslateRequest(
+      text: sentence,
+      source: source,
+      target: target,
+      engine: engine,
+    ),
   );
   final aligned = await alignFrom(full.translatedText);
   if (aligned != null) return aligned;
@@ -126,6 +208,7 @@ Future<String?> _translateViaFullSentence({
         text: loweredSentence,
         source: source,
         target: target,
+        engine: engine,
       ),
     );
     return alignFrom(loweredFull.translatedText);
@@ -149,6 +232,7 @@ Future<String?> _translateAndExtract({
   required String selection,
   required LocaleCode source,
   required LocaleCode target,
+  required TranslationEngine engine,
 }) async {
   final markSpan = buildMarkSpan(sentence, selection);
   final spanIndex = sentence.indexOf(markSpan.spanText);
@@ -167,6 +251,7 @@ Future<String?> _translateAndExtract({
       source: source,
       target: target,
       format: TranslateFormat.html,
+      engine: engine,
     ),
   );
   final markedInner = extractMarkedTranslation(result.translatedText);

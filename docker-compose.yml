@@ -15,3 +15,31 @@ services:
       timeout: 5s
       retries: 10
       start_period: 60s
+
+  # NLLB-200 distilled 600M via CTranslate2 (INT8). Better quality on literary
+  # vocabulary than LibreTranslate/Argos. Built locally for arm64 (Apple Silicon)
+  # and amd64. First run downloads the model (~600 MB) into the volume below.
+  nllb:
+    build: ./nllb-server
+    container_name: book-reader-nllb
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      SERVER_PORT: "7860"
+      OMP_NUM_THREADS: "4"
+    volumes:
+      - nllb-models:/data/huggingface
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:7860/api/v4/health | grep -q '\"ready\": true' || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+
+volumes:
+  nllb-models:
