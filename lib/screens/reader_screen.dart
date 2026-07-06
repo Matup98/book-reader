@@ -4,10 +4,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import '../models/theme_mode_preference.dart';
 import '../models/translation.dart';
 import '../services/context_translator.dart';
 import '../services/text_context.dart';
 import '../services/translation_service.dart';
+import '../widgets/theme_mode_picker.dart';
 import '../widgets/translation_overlay.dart';
 
 /// Debounce window applied to text selection changes so that dragging to
@@ -22,6 +24,8 @@ class ReaderScreen extends StatefulWidget {
     required this.onTranslationModeChanged,
     required this.translationEngine,
     required this.onTranslationEngineChanged,
+    required this.themeMode,
+    required this.onThemeModeChanged,
     required this.fileName,
     this.bytes,
     this.path,
@@ -32,6 +36,8 @@ class ReaderScreen extends StatefulWidget {
   final ValueChanged<TranslationMode> onTranslationModeChanged;
   final TranslationEngine translationEngine;
   final ValueChanged<TranslationEngine> onTranslationEngineChanged;
+  final ThemeModePreference themeMode;
+  final ValueChanged<ThemeModePreference> onThemeModeChanged;
   final String fileName;
   final Uint8List? bytes;
   final String? path;
@@ -83,10 +89,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) {
-        return _TranslationSettingsSheet(
+        return _SettingsSheet(
           mode: _mode,
           engine: _engine,
+          themeMode: widget.themeMode,
           onModeChanged: (mode) {
             _setMode(mode);
             Navigator.pop(sheetContext);
@@ -95,6 +103,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             _setEngine(engine);
             Navigator.pop(sheetContext);
           },
+          onThemeModeChanged: widget.onThemeModeChanged,
         );
       },
     );
@@ -260,7 +269,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.tune),
-            tooltip: 'Ajustes de traducción',
+            tooltip: 'Ajustes',
             onPressed: _showTranslationSettings,
           ),
         ],
@@ -351,30 +360,42 @@ class _OverlayState {
   bool get isVisible => status != TranslationStatus.hidden;
 }
 
-/// Bottom sheet with radio lists for engine and translation mode.
-class _TranslationSettingsSheet extends StatelessWidget {
-  const _TranslationSettingsSheet({
+/// Bottom sheet with settings for appearance and translation.
+class _SettingsSheet extends StatelessWidget {
+  const _SettingsSheet({
     required this.mode,
     required this.engine,
+    required this.themeMode,
     required this.onModeChanged,
     required this.onEngineChanged,
+    required this.onThemeModeChanged,
   });
 
   final TranslationMode mode;
   final TranslationEngine engine;
+  final ThemeModePreference themeMode;
   final ValueChanged<TranslationMode> onModeChanged;
   final ValueChanged<TranslationEngine> onEngineChanged;
+  final ValueChanged<ThemeModePreference> onThemeModeChanged;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text('Apariencia', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 8),
+            ThemeModePicker(
+              mode: themeMode,
+              onChanged: onThemeModeChanged,
+              variant: ThemeModePickerVariant.expanded,
+            ),
+            const Divider(height: 24),
             Text('Traducción', style: theme.textTheme.titleLarge),
             const SizedBox(height: 8),
             Text('Motor', style: theme.textTheme.titleSmall),

@@ -59,7 +59,7 @@ enum TranslationMode {
     for (final mode in TranslationMode.values) {
       if (mode.wireValue == value) return mode;
     }
-    return TranslationMode.context;
+    return TranslationMode.selectedText;
   }
 }
 

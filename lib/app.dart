@@ -2,13 +2,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models/theme_mode_preference.dart';
 import 'models/translation.dart';
 import 'screens/home_screen.dart';
 import 'services/translation_service.dart';
+import 'theme/app_theme.dart';
 
-/// Storage keys for persisted translation preferences.
+/// Storage keys for persisted preferences.
 const String _prefsKeyTranslationMode = 'translation_mode';
 const String _prefsKeyTranslationEngine = 'translation_engine';
+const String _prefsKeyThemeMode = 'theme_mode';
 
 class BookReaderApp extends StatefulWidget {
   const BookReaderApp({super.key});
@@ -19,8 +22,9 @@ class BookReaderApp extends StatefulWidget {
 
 class _BookReaderAppState extends State<BookReaderApp> {
   late final ProxyTranslationProvider _translationProvider;
-  TranslationMode _translationMode = TranslationMode.context;
+  TranslationMode _translationMode = TranslationMode.selectedText;
   TranslationEngine _translationEngine = TranslationEngine.libretranslate;
+  ThemeModePreference _themeMode = ThemeModePreference.system;
 
   @override
   void initState() {
@@ -36,10 +40,13 @@ class _BookReaderAppState extends State<BookReaderApp> {
     final engine = TranslationEngine.fromWireValue(
       prefs.getString(_prefsKeyTranslationEngine),
     );
+    final themeMode =
+        ThemeModePreference.fromWireValue(prefs.getString(_prefsKeyThemeMode));
     if (!mounted) return;
     setState(() {
       _translationMode = mode;
       _translationEngine = engine;
+      _themeMode = themeMode;
     });
   }
 
@@ -55,6 +62,13 @@ class _BookReaderAppState extends State<BookReaderApp> {
     setState(() => _translationEngine = engine);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefsKeyTranslationEngine, engine.wireValue);
+  }
+
+  Future<void> _setThemeMode(ThemeModePreference mode) async {
+    if (mode == _themeMode) return;
+    setState(() => _themeMode = mode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKeyThemeMode, mode.wireValue);
   }
 
   /// Reads `TRANSLATE_API_URL` from `--dart-define`, falling back to the local
@@ -76,16 +90,17 @@ class _BookReaderAppState extends State<BookReaderApp> {
     return MaterialApp(
       title: 'Book Reader',
       debugShowCheckedModeBanner: kDebugMode,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
+      theme: lightTheme,
+      darkTheme: darkTheme,
+      themeMode: _themeMode.toThemeMode(),
       home: HomeScreen(
         translationProvider: _translationProvider,
         translationMode: _translationMode,
         onTranslationModeChanged: _setTranslationMode,
         translationEngine: _translationEngine,
         onTranslationEngineChanged: _setTranslationEngine,
+        themeMode: _themeMode,
+        onThemeModeChanged: _setThemeMode,
       ),
     );
   }

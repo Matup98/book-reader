@@ -3,8 +3,10 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../models/theme_mode_preference.dart';
 import '../models/translation.dart';
 import '../services/translation_service.dart';
+import '../widgets/theme_mode_picker.dart';
 import 'reader_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -15,6 +17,8 @@ class HomeScreen extends StatefulWidget {
     required this.onTranslationModeChanged,
     required this.translationEngine,
     required this.onTranslationEngineChanged,
+    required this.themeMode,
+    required this.onThemeModeChanged,
   });
 
   final TranslationProvider translationProvider;
@@ -22,6 +26,8 @@ class HomeScreen extends StatefulWidget {
   final ValueChanged<TranslationMode> onTranslationModeChanged;
   final TranslationEngine translationEngine;
   final ValueChanged<TranslationEngine> onTranslationEngineChanged;
+  final ThemeModePreference themeMode;
+  final ValueChanged<ThemeModePreference> onThemeModeChanged;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -58,6 +64,8 @@ class _HomeScreenState extends State<HomeScreen> {
             onTranslationModeChanged: widget.onTranslationModeChanged,
             translationEngine: widget.translationEngine,
             onTranslationEngineChanged: widget.onTranslationEngineChanged,
+            themeMode: widget.themeMode,
+            onThemeModeChanged: widget.onThemeModeChanged,
             fileName: file.name,
             bytes: bytes,
             path: path,
@@ -82,7 +90,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Book Reader')),
+      appBar: AppBar(
+        title: const Text('Book Reader'),
+        actions: [
+          ThemeModePicker(
+            mode: widget.themeMode,
+            onChanged: widget.onThemeModeChanged,
+            variant: ThemeModePickerVariant.compact,
+          ),
+        ],
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
